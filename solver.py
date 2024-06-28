@@ -1,90 +1,35 @@
+import pandas as pd
+from ortools.linear_solver import pywraplp
+
+from data import load_and_prepare_data
+
 
 
 if __name__ == '__main__':
-    import pandas as pd
-    from ortools.linear_solver import pywraplp
+    # read input files - data
+    # choose a solver or set up a sovler
+    # define decision varibles
+    # define objective function
+    # define constraints
+    # solve
+    # extract solution
 
-    # Load all the CSV files
-    carbon_emissions = pd.read_csv('data/carbon_emissions.csv')
-    cost_profiles = pd.read_csv('data/cost_profiles.csv')
-    demand = pd.read_csv('data/demand.csv')
-    fuels = pd.read_csv('data/fuels.csv')
-    vehicles_fuels = pd.read_csv('data/vehicles_fuels.csv')
-    vehicles = pd.read_csv('data/vehicles.csv')
-    sample_submission = pd.read_csv('data/sample_submission.csv')
-
-    # Define constants
     num_years = 16
     start_year = 2023
     end_year = start_year + num_years
     years = list(range(start_year, end_year))
-    vehicle_ids = vehicles['ID'].unique()
-    size_buckets = vehicles['Size'].unique()
+
+    data = load_and_prepare_data('data', years)
+
+    # Define constants
+
+    vehicle_ids = list(set([k for k, v in data['vehicles'].items()]))
+    size_buckets =  list(set([v['size_bucket'] for k, v in data['vehicles'].items()]))
     distance_buckets = ['D1', 'D2', 'D3', 'D4']
     num_scenarios = 1
 
     # Generate all combinations of size and distance buckets
     all_combinations = [(size, distance) for size in size_buckets for distance in distance_buckets]
-
-    # Initialize data dictionary
-    data = {
-        'years': years,
-        'demand': {},
-        'vehicles': {},
-        'vehicle_fuels': {},
-        'fuels': {},
-        'carbon_limits': {},
-        'cost_profiles': {}
-    }
-
-    # Populate demand data
-    for _, row in demand.iterrows():
-        year = row['Year']
-        size_bucket = row['Size']
-        distance_bucket = row['Distance']
-        if year not in data['demand']:
-            data['demand'][year] = {}
-        data['demand'][year][(size_bucket, distance_bucket)] = row['Demand (km)']
-
-    # Populate vehicle data
-    for _, row in vehicles.iterrows():
-        vehicle_id = row['ID']
-        data['vehicles'][vehicle_id] = {
-            'drivetrain': row['Vehicle'],
-            'size_bucket': row['Size'],
-            'purchase_cost': row['Cost ($)'],
-            'yearly_range': row['Yearly range (km)'],
-            'distance_bucket': row['Distance']
-        }
-
-    # Populate vehicle fuel data
-    for _, row in vehicles_fuels.iterrows():
-        vehicle_id = row['ID']
-        fuel_type = row['Fuel']
-        data['vehicle_fuels'][(vehicle_id, fuel_type)] = row['Consumption (unit_fuel/km)']
-
-    # Populate fuels data
-    for _, row in fuels.iterrows():
-        fuel_type = row['Fuel']
-        data['fuels'][fuel_type] = {
-            'carbon_emission': row['Emissions (CO2/unit_fuel)'],
-            'cost': row['Cost ($/unit_fuel)'],
-            'uncertainty': row['Cost Uncertainty (±%)']
-        }
-
-    # Populate carbon emission limits
-    for _, row in carbon_emissions.iterrows():
-        year = row['Year']
-        data['carbon_limits'][year] = row['Carbon emission CO2/kg']
-
-    # Populate cost profiles data
-    for _, row in cost_profiles.iterrows():
-        year = row['End of Year']
-        data['cost_profiles'][year] = {
-            'resale_value': row['Resale Value %'],
-            'insurance_cost': row['Insurance Cost %'],
-            'maintenance_cost': row['Maintenance Cost %']
-        }
 
     # Create the solver
     solver = pywraplp.Solver.CreateSolver('SCIP')
@@ -107,7 +52,8 @@ if __name__ == '__main__':
                 if (vehicle_id, fuel_type) in data['vehicle_fuels']:
                     for distance_bucket in distance_buckets:
                         # Use decision variable: integer indicating the number of vehicles used in the given year with specific fuel type and distance bucket
-                        use[(vehicle_id, fuel_type, distance_bucket, year)] = solver.IntVar(0, solver.infinity(), f'use_{vehicle_id}_{fuel_type}_{distance_bucket}_{year}')
+                        use[(vehicle_id, fuel_type, distance_bucket, year)] = solver.IntVar(0, solver.infinity(),
+                                                                                            f'use_{vehicle_id}_{fuel_type}_{distance_bucket}_{year}')
 
             # Sell decision variable: integer indicating the number of vehicles sold in the given year
             sell[(vehicle_id, year)] = solver.IntVar(0, solver.infinity(), f'sell_{vehicle_id}_{year}')
@@ -116,8 +62,10 @@ if __name__ == '__main__':
     for year in years:
         for vehicle_id in vehicle_ids:
             # Calculate the number of vehicles available for this ID in this year
-            available_vehicles = solver.Sum([buy[(vehicle_id, y)] for y in years if y <= year and (vehicle_id, y) in buy]) - \
-                                 solver.Sum([sell[(vehicle_id, y)] for y in years if y < year and (vehicle_id, y) in sell])
+            available_vehicles = solver.Sum(
+                [buy[(vehicle_id, y)] for y in years if y <= year and (vehicle_id, y) in buy]) - \
+                                 solver.Sum(
+                                     [sell[(vehicle_id, y)] for y in years if y < year and (vehicle_id, y) in sell])
 
             # Ensure that the number of vehicles used does not exceed the available vehicles
             solver.Add(
@@ -136,8 +84,10 @@ if __name__ == '__main__':
     # Ensure vehicles sold do not exceed the number of vehicles in the fleet
     for year in years:
         for vehicle_id in vehicle_ids:
-            available_vehicles = solver.Sum([buy[(vehicle_id, y)] for y in years if y <= year and (vehicle_id, y) in buy]) - \
-                                 solver.Sum([sell[(vehicle_id, y)] for y in years if y < year and (vehicle_id, y) in sell])
+            available_vehicles = solver.Sum(
+                [buy[(vehicle_id, y)] for y in years if y <= year and (vehicle_id, y) in buy]) - \
+                                 solver.Sum(
+                                     [sell[(vehicle_id, y)] for y in years if y < year and (vehicle_id, y) in sell])
 
             # Ensure that the number of vehicles sold does not exceed the available vehicles
             solver.Add(
@@ -150,11 +100,14 @@ if __name__ == '__main__':
                 if (size_bucket, distance_bucket) in data['demand'][year]:
                     demand_value = data['demand'][year][(size_bucket, distance_bucket)]
                     solver.Add(
-                        solver.Sum([use[(vehicle_id, fuel_type, distance_bucket, year)] * data['vehicles'][vehicle_id]['yearly_range']
+                        solver.Sum([use[(vehicle_id, fuel_type, distance_bucket, year)] * data['vehicles'][vehicle_id][
+                            'yearly_range']
                                     for vehicle_id in data['vehicles']
                                     for fuel_type in data['fuels']
                                     if data['vehicles'][vehicle_id]['size_bucket'] == size_bucket and
-                                    distance_buckets.index(data['vehicles'][vehicle_id]['distance_bucket']) >= distance_buckets.index(distance_bucket) and
+                                    distance_buckets.index(
+                                        data['vehicles'][vehicle_id]['distance_bucket']) >= distance_buckets.index(
+                                distance_bucket) and
                                     (vehicle_id, fuel_type) in data['vehicle_fuels']]
                                    ) >= demand_value
                     )
@@ -163,7 +116,8 @@ if __name__ == '__main__':
     for year in years:
         carbon_emission_limit = data['carbon_limits'][year]
         total_emissions = solver.Sum([
-            use[(vehicle_id, fuel_type, distance_bucket, year)] * data['vehicle_fuels'][(vehicle_id, fuel_type)] * data['fuels'][fuel_type]['carbon_emission'] * data['vehicles'][vehicle_id]['yearly_range']
+            use[(vehicle_id, fuel_type, distance_bucket, year)] * data['vehicle_fuels'][(vehicle_id, fuel_type)] *
+            data['fuels'][fuel_type]['carbon_emission'] * data['vehicles'][vehicle_id]['yearly_range']
             for vehicle_id in data['vehicles']
             for fuel_type in data['fuels']
             for distance_bucket in distance_buckets
@@ -182,20 +136,24 @@ if __name__ == '__main__':
         purchase_year = int(vehicle_id.split('_')[-1])
         if purchase_year + 10 in years:
             solver.Add(
-                solver.Sum([sell[(vehicle_id, y)] for y in range(purchase_year, min(purchase_year + 11, end_year))]) >= buy[(vehicle_id, purchase_year)]
+                solver.Sum([sell[(vehicle_id, y)] for y in range(purchase_year, min(purchase_year + 11, end_year))]) >=
+                buy[(vehicle_id, purchase_year)]
             )
 
     # Add Fleet Sell Limit Constraint
     for year in years:
         # Calculate the fleet size at the beginning of the year
         fleet_size = solver.Sum([
-            buy[(vehicle_id, y)] for vehicle_id in data['vehicles'] for y in years if y <= year and (vehicle_id, y) in buy
+            buy[(vehicle_id, y)] for vehicle_id in data['vehicles'] for y in years if
+            y <= year and (vehicle_id, y) in buy
         ]) - solver.Sum([
-            sell[(vehicle_id, y)] for vehicle_id in data['vehicles'] for y in years if y < year and (vehicle_id, y) in sell
+            sell[(vehicle_id, y)] for vehicle_id in data['vehicles'] for y in years if
+            y < year and (vehicle_id, y) in sell
         ])
         # Ensure that at most 20% of the fleet can be sold each year
         solver.Add(
-            solver.Sum([sell[(vehicle_id, year)] for vehicle_id in data['vehicles'] if (vehicle_id, year) in sell]) <= 0.2 * fleet_size
+            solver.Sum([sell[(vehicle_id, year)] for vehicle_id in data['vehicles'] if
+                        (vehicle_id, year) in sell]) <= 0.2 * fleet_size
         )
 
     # Add Vehicle Usage Year Constraint
@@ -229,7 +187,8 @@ if __name__ == '__main__':
             for fuel_type in data['fuels']:
                 for distance_bucket in distance_buckets:
                     if (vehicle_id, fuel_type, distance_bucket, year) in use:
-                        fuel_cost_per_km = data['vehicle_fuels'][(vehicle_id, fuel_type)] * data['fuels'][fuel_type]['cost']
+                        fuel_cost_per_km = data['vehicle_fuels'][(vehicle_id, fuel_type)] * data['fuels'][fuel_type][
+                            'cost']
                         yearly_range = data['vehicles'][vehicle_id]['yearly_range']
                         total_fuel_cost = fuel_cost_per_km * yearly_range
                         objective.SetCoefficient(use[(vehicle_id, fuel_type, distance_bucket, year)], total_fuel_cost)
@@ -253,7 +212,8 @@ if __name__ == '__main__':
                         if (vehicle_id, fuel_type) in data['vehicle_fuels']:
                             for distance_bucket in distance_buckets:
                                 if (vehicle_id, fuel_type, distance_bucket, year) in use:
-                                    objective.SetCoefficient(use[(vehicle_id, fuel_type, distance_bucket, year)], total_maintenance_and_insurance_cost)
+                                    objective.SetCoefficient(use[(vehicle_id, fuel_type, distance_bucket, year)],
+                                                             total_maintenance_and_insurance_cost)
 
     # Set the objective to minimize the total cost
     objective.SetMinimization()
@@ -272,14 +232,20 @@ if __name__ == '__main__':
             # Check if there are any vehicles used for this combination
             for vehicle_id in vehicle_ids:
                 for fuel_type in data['fuels']:
-                    if (vehicle_id, fuel_type, distance_bucket, year) in use and use[(vehicle_id, fuel_type, distance_bucket, year)].solution_value() > 0:
+                    if (vehicle_id, fuel_type, distance_bucket, year) in use and use[
+                        (vehicle_id, fuel_type, distance_bucket, year)].solution_value() > 0:
                         vehicle_size_bucket = data['vehicles'][vehicle_id]['size_bucket']
                         vehicle_distance_bucket = data['vehicles'][vehicle_id]['distance_bucket']
-                        if vehicle_size_bucket == size_bucket and distance_buckets.index(vehicle_distance_bucket) >= distance_buckets.index(distance_bucket):
-                            distance_per_vehicle += data['vehicles'][vehicle_id]['yearly_range'] * use[(vehicle_id, fuel_type, distance_bucket, year)].solution_value()
+                        if vehicle_size_bucket == size_bucket and distance_buckets.index(
+                                vehicle_distance_bucket) >= distance_buckets.index(distance_bucket):
+                            distance_per_vehicle += data['vehicles'][vehicle_id]['yearly_range'] * use[
+                                (vehicle_id, fuel_type, distance_bucket, year)].solution_value()
 
                             # Add the solution entry
-                            solution.append([year, vehicle_id, int(use[(vehicle_id, fuel_type, distance_bucket, year)].solution_value()), 'Use', fuel_type, distance_bucket, data['vehicles'][vehicle_id]['yearly_range']])
+                            solution.append([year, vehicle_id,
+                                             int(use[(vehicle_id, fuel_type, distance_bucket, year)].solution_value()),
+                                             'Use', fuel_type, distance_bucket,
+                                             data['vehicles'][vehicle_id]['yearly_range']])
                             used_vehicle = True
 
             # If no vehicle is used for this combination, add a row with Num_Vehicles = 0
@@ -296,7 +262,8 @@ if __name__ == '__main__':
                 solution.append([year, vehicle_id, int(sell[(vehicle_id, year)].solution_value()), 'Sell', '', '', ''])
 
     # Create the solution dataframe
-    solution_df = pd.DataFrame(solution, columns=['Year', 'ID', 'Num_Vehicles', 'Type', 'Fuel', 'Distance_bucket', 'Distance_per_vehicle(km)'])
+    solution_df = pd.DataFrame(solution, columns=['Year', 'ID', 'Num_Vehicles', 'Type', 'Fuel', 'Distance_bucket',
+                                                  'Distance_per_vehicle(km)'])
 
     # Save the solution to a CSV file
     solution_df.to_csv('solution.csv', index=False)
