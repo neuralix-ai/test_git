@@ -1,1 +1,2 @@
-new test feature
+if __name__ == '__main__':
+    print("main")
